@@ -28,24 +28,24 @@ const donateAmount = async (req, res) => {
       contactNumber,
       amount,
       proofImage,
+      isVerified: false,  // ✅ ADD: Mark as unverified
     });
 
     await newDonor.save();
 
     fund.donators.push(newDonor._id);
-    fund.donationAmount += parseFloat(amount);
-    fund.donationCount += 1;
+    // ❌ REMOVED: fund.donationAmount += parseFloat(amount);
+    // ❌ REMOVED: fund.donationCount += 1;
     await fund.save();
 
-
+    // Send notification to admin for verification
     await sendDonationNotificationToAdmin({ donor: newDonor, fund });
-    await sendThankYouEmailToDonor({ donor: newDonor, fund });
-
+    // ❌ REMOVED: await sendThankYouEmailToDonor({ donor: newDonor, fund });
+    // Thank you email will be sent AFTER admin verification
 
     res.status(201).json({
-      msg: "Donation successful!",
+      msg: "Thank you for your donation! Your contribution will be reflected on the campaign after our team verifies the payment.", // ✅ UPDATED MESSAGE
       donor: newDonor,
-      fund,
     });
   } catch (error) {
     console.error("Error donating amount:", error);
