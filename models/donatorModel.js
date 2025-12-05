@@ -36,6 +36,18 @@ const donatorSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // ✅ ADD THESE 3 NEW FIELDS
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    verifiedAt: {
+      type: Date,
+    },
+    verifiedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "user",
+    },
   },
   { timestamps: true }
 );
