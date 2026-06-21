@@ -149,7 +149,9 @@ const getAllFunds = async (req, res) => {
   try {
     const { search } = req.query;
 
-    const filter = { status: "active" };
+    // Public = approved and not paused/closed. The status check tolerates
+    // legacy campaigns created before the status field existed.
+    const filter = { isApproved: true, status: { $nin: ["paused", "closed"] } };
 
     if (search) {
       filter.$or = [
@@ -177,7 +179,8 @@ const getTrendingFunds = async (req, res) => {
   try {
     // Trending = live campaigns with the most raised so far.
     const trendingFunds = await CreateFund.find({
-      status: "active",
+      isApproved: true,
+      status: { $nin: ["paused", "closed"] },
       donationAmount: { $gt: 0 },
     })
       .populate("userId", "fullName profilePhoto cityName")
@@ -201,7 +204,8 @@ const getFundById = async (req, res) => {
   try {
     const fund = await CreateFund.findOne({
       _id: id,
-      status: "active",
+      isApproved: true,
+      status: { $nin: ["paused", "closed"] },
     }).populate("userId", "fullName profilePhoto cityName");
 
     if (!fund) {

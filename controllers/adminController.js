@@ -70,7 +70,9 @@ const rejectFund = async (req, res) => {
 // Live + paused campaigns for the admin management view.
 const getManagedFunds = async (req, res) => {
   try {
-    const funds = await CreateFund.find({ status: { $in: ["active", "paused"] } })
+    // Approved campaigns that aren't closed (tolerates legacy funds with no
+    // status field — they are treated as active for management purposes).
+    const funds = await CreateFund.find({ isApproved: true, status: { $ne: "closed" } })
       .populate("userId", "fullName email")
       .sort({ createdAt: -1 });
     res.status(200).json({ funds });
