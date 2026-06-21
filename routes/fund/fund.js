@@ -8,6 +8,7 @@ const {
   getDonatorsByFundId,
   getTrendingFunds,
   deleteMyFund,
+  closeMyFund,
 } = require("../../controllers/fundController");
 const { submitFundReport } = require("../../controllers/fundReportController");
 const router = express.Router();
@@ -28,6 +29,12 @@ router.get("/fund-list", getAllFunds);
 router.get("/trending", getTrendingFunds);
 router.get("/fund-list/:id", getFundById);
 router.get("/donar-by-fundId/:fundId", getDonatorsByFundId);
+
+router.put(
+  "/fund-list/:id/close",
+  checkForAuthenticationCookie("token"),
+  closeMyFund
+);
 
 router.delete(
   "/fund-list/:id",

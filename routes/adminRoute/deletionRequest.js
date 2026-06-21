@@ -12,7 +12,7 @@ router.get(
   "/account-deletion/pending-requests",
   checkForAuthenticationCookie("token"),
   authorizeRoles(["admin"]),
-   getAllPendingDeletions
+  getAllPendingDeletions
 );
 router.put(
   "/account-deletion/approve/:id",

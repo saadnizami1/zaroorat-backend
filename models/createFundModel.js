@@ -62,15 +62,19 @@ const createFundSchema = new mongoose.Schema(
 
     accountHolderName: {
       type: String,
+      trim: true,
     },
     accountNumber: {
-      type: Object,
+      type: String,
+      trim: true,
     },
     ifscCode: {
-      type: Object,
+      type: String,
+      trim: true,
     },
-      bankCode: {
-      type: Object,
+    bankCode: {
+      type: String,
+      trim: true,
     },
 
     bankName: {
@@ -118,9 +122,27 @@ const createFundSchema = new mongoose.Schema(
       default: false,
     },
 
+    // Lifecycle:
+    //  pending  – awaiting admin approval (not public)
+    //  active   – approved & live (public, accepting donations)
+    //  paused   – suspended by admin (not public, e.g. suspected fraud)
+    //  closed   – closed/withdrawn by the owner (not public)
+    status: {
+      type: String,
+      enum: ["pending", "active", "paused", "closed"],
+      default: "pending",
+    },
+    closedAt: {
+      type: Date,
+    },
+    pausedReason: {
+      type: String,
+    },
+
+    // Target/goal amount for the campaign (not the amount raised).
     totalAmountRaised: {
       type: Number,
-       min: 500,
+      min: 500,
     },
     donators: [
       {

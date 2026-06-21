@@ -132,8 +132,9 @@ const forgotPassword = async (req, res) => {
       return res.status(500).json({ msg: "Failed to send reset email" });
     }
 
+    // Note: the reset link is emailed only — never returned in the response,
+    // otherwise anyone could request a reset for an email and read the token.
     return res.status(200).json({
-      resetLink,
       msg: "Reset link sent to your email successfully",
     });
   } catch (error) {

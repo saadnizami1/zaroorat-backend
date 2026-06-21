@@ -21,12 +21,14 @@ const donatorSchema = new mongoose.Schema(
       required: true,
     },
     contactNumber: {
-      type: Number,
+      type: String,
       required: true,
+      trim: true,
     },
     amount: {
       type: Number,
       required: true,
+      min: [1, "Donation amount must be greater than zero"],
     },
     donatedAt: {
       type: Date,
@@ -36,7 +38,8 @@ const donatorSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    // ✅ ADD THESE 3 NEW FIELDS
+    // Donations start unverified; an admin verifies the uploaded proof of
+    // payment before the amount is credited to the campaign total.
     isVerified: {
       type: Boolean,
       default: false,

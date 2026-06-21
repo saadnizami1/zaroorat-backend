@@ -1,10 +1,17 @@
-const { sendFundStatusEmailToUser, sendThankYouEmailToDonor } = require("../emailService/emailService"); // ✅ UPDATED
+const {
+  sendFundStatusEmailToUser,
+  sendThankYouEmailToDonor,
+} = require("../emailService/emailService");
 const CreateFund = require("../models/createFundModel");
-const Donator = require("../models/donatorModel"); // ✅ ADD
+const Donator = require("../models/donatorModel");
+const { cascadeDeleteFund } = require("./fundController");
+const { deleteCloudinaryImage } = require("../config/cloudinary/deleteImage");
 
 const getPendingFunds = async (req, res) => {
   try {
-    const pendingFunds = await CreateFund.find({ isApproved: false }).populate("userId");
+    const pendingFunds = await CreateFund.find({ status: "pending" }).populate(
+      "userId"
+    );
     res.status(200).json({ pendingFunds });
   } catch (error) {
     res.status(500).json({ msg: "Server error while fetching pending funds" });
@@ -16,7 +23,7 @@ const approveFund = async (req, res) => {
     const fundId = req.params.id;
     const fund = await CreateFund.findByIdAndUpdate(
       fundId,
-      { isApproved: true },
+      { isApproved: true, status: "active" },
       { new: true }
     ).populate("userId");
 
@@ -24,12 +31,11 @@ const approveFund = async (req, res) => {
       return res.status(404).json({ msg: "Fund not found" });
     }
 
-      await sendFundStatusEmailToUser({
+    await sendFundStatusEmailToUser({
       fund,
       user: fund.userId,
       status: "Approved",
     });
-
 
     res.status(200).json({ msg: "Fund approved successfully", fund });
   } catch (error) {
@@ -37,21 +43,21 @@ const approveFund = async (req, res) => {
   }
 };
 
-
 const rejectFund = async (req, res) => {
   try {
     const fundId = req.params.id;
 
-
-    const fund = await CreateFund.findByIdAndDelete(fundId).populate("userId");
-
+    const fund = await CreateFund.findById(fundId).populate("userId");
     if (!fund) {
       return res.status(404).json({ msg: "Fund not found" });
     }
 
-   await sendFundStatusEmailToUser({
+    const user = fund.userId;
+    await cascadeDeleteFund(fund);
+
+    await sendFundStatusEmailToUser({
       fund,
-      user: fund.userId,
+      user,
       status: "Rejected",
     });
 
@@ -61,16 +67,61 @@ const rejectFund = async (req, res) => {
   }
 };
 
-// ✅ ADD THESE 3 NEW FUNCTIONS
+// Live + paused campaigns for the admin management view.
+const getManagedFunds = async (req, res) => {
+  try {
+    const funds = await CreateFund.find({ status: { $in: ["active", "paused"] } })
+      .populate("userId", "fullName email")
+      .sort({ createdAt: -1 });
+    res.status(200).json({ funds });
+  } catch (error) {
+    console.error("Error fetching managed funds:", error);
+    res.status(500).json({ msg: "Server error while fetching managed funds" });
+  }
+};
 
-// Get all pending (unverified) donations
+// Admin suspends a live campaign (e.g. suspected fraud) without deleting it.
+const pauseFund = async (req, res) => {
+  try {
+    const fund = await CreateFund.findById(req.params.id);
+    if (!fund) {
+      return res.status(404).json({ msg: "Fund not found" });
+    }
+    fund.status = "paused";
+    if (req.body?.reason) fund.pausedReason = req.body.reason;
+    await fund.save();
+    res.status(200).json({ msg: "Fund paused", fund });
+  } catch (error) {
+    console.error("Error pausing fund:", error);
+    res.status(500).json({ msg: "Server error while pausing fund" });
+  }
+};
+
+const resumeFund = async (req, res) => {
+  try {
+    const fund = await CreateFund.findById(req.params.id);
+    if (!fund) {
+      return res.status(404).json({ msg: "Fund not found" });
+    }
+    fund.status = "active";
+    fund.isApproved = true;
+    fund.pausedReason = undefined;
+    await fund.save();
+    res.status(200).json({ msg: "Fund resumed", fund });
+  } catch (error) {
+    console.error("Error resuming fund:", error);
+    res.status(500).json({ msg: "Server error while resuming fund" });
+  }
+};
+
+// Get all pending (unverified) donations awaiting proof verification.
 const getPendingDonations = async (req, res) => {
   try {
     const pendingDonations = await Donator.find({ isVerified: false })
       .populate("fundId", "fundraiseTitle")
       .populate("userId", "fullName email")
       .sort({ createdAt: -1 });
-    
+
     res.status(200).json({ pendingDonations });
   } catch (error) {
     console.error("Error fetching pending donations:", error);
@@ -78,7 +129,7 @@ const getPendingDonations = async (req, res) => {
   }
 };
 
-// Verify a donation
+// Verify a donation: credit the campaign total and thank the donor.
 const verifyDonation = async (req, res) => {
   try {
     const donationId = req.params.id;
@@ -88,30 +139,32 @@ const verifyDonation = async (req, res) => {
     if (!donation) {
       return res.status(404).json({ msg: "Donation not found" });
     }
-
     if (donation.isVerified) {
       return res.status(400).json({ msg: "Donation already verified" });
     }
 
-    // Mark as verified
+    const fund = donation.fundId;
+    if (!fund) {
+      return res
+        .status(404)
+        .json({ msg: "The campaign for this donation no longer exists" });
+    }
+
     donation.isVerified = true;
     donation.verifiedAt = new Date();
     donation.verifiedBy = adminId;
     await donation.save();
 
-    // Update fund amount
-    const fund = donation.fundId;
-    fund.donationAmount += parseFloat(donation.amount);
-    fund.donationCount += 1;
+    fund.donationAmount = (fund.donationAmount || 0) + Number(donation.amount);
+    fund.donationCount = (fund.donationCount || 0) + 1;
     await fund.save();
 
-    // Send thank you email to donor
     await sendThankYouEmailToDonor({ donor: donation, fund });
 
-    res.status(200).json({ 
-      msg: "Donation verified successfully", 
+    res.status(200).json({
+      msg: "Donation verified successfully",
       donation,
-      updatedFund: fund 
+      updatedFund: fund,
     });
   } catch (error) {
     console.error("Error verifying donation:", error);
@@ -119,20 +172,28 @@ const verifyDonation = async (req, res) => {
   }
 };
 
-// Reject a donation
+// Reject a donation: remove the record, its proof image, and the fund link.
 const rejectDonation = async (req, res) => {
   try {
     const donationId = req.params.id;
 
-    const donation = await Donator.findByIdAndDelete(donationId).populate("fundId");
+    const donation = await Donator.findById(donationId);
     if (!donation) {
       return res.status(404).json({ msg: "Donation not found" });
     }
+    if (donation.isVerified) {
+      return res.status(400).json({
+        msg: "Cannot reject a donation that has already been verified",
+      });
+    }
 
-    // Remove from fund's donators array
-    await CreateFund.findByIdAndUpdate(donation.fundId._id, {
-      $pull: { donators: donationId }
+    await Donator.findByIdAndDelete(donationId);
+
+    await CreateFund.findByIdAndUpdate(donation.fundId, {
+      $pull: { donators: donationId },
     });
+
+    await deleteCloudinaryImage(donation.proofImage);
 
     res.status(200).json({ msg: "Donation rejected and removed" });
   } catch (error) {
@@ -145,7 +206,10 @@ module.exports = {
   getPendingFunds,
   approveFund,
   rejectFund,
-  getPendingDonations,  // ✅ ADD
-  verifyDonation,       // ✅ ADD
-  rejectDonation,       // ✅ ADD
+  getManagedFunds,
+  pauseFund,
+  resumeFund,
+  getPendingDonations,
+  verifyDonation,
+  rejectDonation,
 };

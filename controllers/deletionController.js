@@ -2,15 +2,23 @@ const CreateFund = require("../models/createFundModel");
 const DeletionRequest = require("../models/deletionModel");
 const Donator = require("../models/donatorModel");
 const User = require("../models/userModel");
-
+const { cascadeDeleteFund } = require("./fundController");
+const {
+  deleteCloudinaryImage,
+  deleteCloudinaryImages,
+} = require("../config/cloudinary/deleteImage");
 
 const handleRequestDeletion = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ msg: "User not found" });
 
-    const existingRequest = await DeletionRequest.findOne({ userId: user._id, status: "pending" });
-    if (existingRequest) return res.status(400).json({ msg: "Deletion request already pending" });
+    const existingRequest = await DeletionRequest.findOne({
+      userId: user._id,
+      status: "pending",
+    });
+    if (existingRequest)
+      return res.status(400).json({ msg: "Deletion request already pending" });
 
     const deletionReq = new DeletionRequest({
       userId: user._id,
@@ -28,7 +36,7 @@ const handleRequestDeletion = async (req, res) => {
 
 const getAllPendingDeletions = async (req, res) => {
   try {
-    const pendingRequests = await DeletionRequest.find({status:"pending"})
+    const pendingRequests = await DeletionRequest.find({ status: "pending" })
       .populate("userId", "fullName email")
       .sort({ createdAt: -1 });
     const enrichedRequests = await Promise.all(
@@ -40,7 +48,7 @@ const getAllPendingDeletions = async (req, res) => {
           .lean();
 
         const createdFunds = await CreateFund.find({ userId })
-          .select("fundraiseTitle donationAmount totalAmountRaised isApproved")
+          .select("fundraiseTitle donationAmount totalAmountRaised status")
           .lean();
 
         return {
@@ -63,6 +71,10 @@ const getAllPendingDeletions = async (req, res) => {
     res.status(500).json({ msg: "Server error" });
   }
 };
+
+// Approving a deletion request cascades: it removes the user, every fundraiser
+// they created (and that fund's donations/images), every donation they made
+// (adjusting the affected campaign totals), and their profile/CNIC images.
 const handleApproveDeletion = async (req, res) => {
   try {
     const request = await DeletionRequest.findById(req.params.id);
@@ -71,39 +83,73 @@ const handleApproveDeletion = async (req, res) => {
     }
 
     const user = await User.findById(request.userId);
-    if (!user) return res.status(404).json({ msg: "User already deleted" });
+    if (!user) {
+      // User already gone — just close out the request.
+      request.status = "approved";
+      await request.save();
+      return res.status(200).json({ msg: "User already deleted." });
+    }
 
-    const donations = await Donator.find({ userId: user._id }).populate("fundId", "fundraiseTitle");
     const createdFunds = await CreateFund.find({ userId: user._id });
+    const donations = await Donator.find({ userId: user._id }).populate(
+      "fundId",
+      "fundraiseTitle"
+    );
 
-    const donatedFunds = donations.map(d => ({
+    // Snapshot for the audit log before anything is removed.
+    request.donatedFunds = donations.map((d) => ({
       fundTitle: d.fundId?.fundraiseTitle || "Unknown",
       amount: d.amount,
       donatedAt: d.createdAt,
     }));
-
-    const fundData = createdFunds.map(f => ({
+    request.createdFunds = createdFunds.map((f) => ({
       fundraiseTitle: f.fundraiseTitle,
       fundCategory: f.fundCategory,
-     totalAmountRaised:f.totalAmountRaised,
+      totalAmountRaised: f.totalAmountRaised,
       createdAt: f.createdAt,
       isApproved: f.isApproved,
     }));
-
-    request.donatedFunds = donatedFunds;
-    request.createdFunds = fundData;
     request.status = "approved";
-
     await request.save();
+
+    const createdFundIds = new Set(createdFunds.map((f) => f._id.toString()));
+
+    // 1) Remove every fundraiser the user created (with its own cascade).
+    for (const fund of createdFunds) {
+      await cascadeDeleteFund(fund);
+    }
+
+    // 2) Remove the user's donations to OTHER people's funds, adjusting totals.
+    for (const donation of donations) {
+      const fundId = donation.fundId?._id || donation.fundId;
+      if (fundId && !createdFundIds.has(fundId.toString())) {
+        if (donation.isVerified) {
+          await CreateFund.findByIdAndUpdate(fundId, {
+            $inc: { donationAmount: -Number(donation.amount), donationCount: -1 },
+            $pull: { donators: donation._id },
+          });
+        } else {
+          await CreateFund.findByIdAndUpdate(fundId, {
+            $pull: { donators: donation._id },
+          });
+        }
+        await deleteCloudinaryImage(donation.proofImage);
+      }
+    }
+    await Donator.deleteMany({ userId: user._id });
+
+    // 3) Remove the user's own uploaded images, then the user.
+    await deleteCloudinaryImages([user.profilePhoto, user.cnicImage]);
     await User.findByIdAndDelete(user._id);
 
-    res.status(200).json({ msg: "User deleted and details saved in deletion log." });
+    res
+      .status(200)
+      .json({ msg: "User and all associated data deleted successfully." });
   } catch (err) {
     console.error("Error approving deletion:", err);
     res.status(500).json({ msg: "Server error" });
   }
 };
-
 
 const handleRejectDeletion = async (req, res) => {
   try {
@@ -122,14 +168,9 @@ const handleRejectDeletion = async (req, res) => {
   }
 };
 
-
-
-
-
-
 module.exports = {
-     handleRequestDeletion,
-     getAllPendingDeletions,
-      handleApproveDeletion,
-      handleRejectDeletion
-}
+  handleRequestDeletion,
+  getAllPendingDeletions,
+  handleApproveDeletion,
+  handleRejectDeletion,
+};

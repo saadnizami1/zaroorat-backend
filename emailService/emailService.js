@@ -256,7 +256,7 @@ const sendDonationNotificationToAdmin = async ({ donor, fund }) => {
 
 const sendThankYouEmailToDonor = async ({ donor, fund }) => {
   try {
-    const fundLink = `https://zaroorat.xyz/api/fund/fund-list/${fund._id}`; 
+    const fundLink = `https://zaroorat.xyz/donate/${fund._id}`;
 
     const mailOptions = {
       from: `"Zaroorat" <${process.env.ADMIN_EMAIL}>`,

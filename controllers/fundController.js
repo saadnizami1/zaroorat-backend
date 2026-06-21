@@ -6,6 +6,28 @@ const CreateFund = require("../models/createFundModel");
 const Donator = require("../models/donatorModel");
 const fundReport = require("../models/fundReport");
 const User = require("../models/userModel");
+const { deleteCloudinaryImages } = require("../config/cloudinary/deleteImage");
+
+const MIN_GOAL = 500;
+
+/**
+ * Remove a fund and everything attached to it: its donations, the donation
+ * proof images, the report images, and the cover image. Best-effort on images.
+ */
+const cascadeDeleteFund = async (fund) => {
+  const donations = await Donator.find({ fundId: fund._id }).select("proofImage");
+  const reports = await fundReport.find({ fundId: fund._id }).select("image");
+
+  await Donator.deleteMany({ fundId: fund._id });
+  await fundReport.deleteMany({ fundId: fund._id });
+  await CreateFund.findByIdAndDelete(fund._id);
+
+  await deleteCloudinaryImages([
+    fund.coverImage,
+    ...donations.map((d) => d.proofImage),
+    ...reports.map((r) => r.image),
+  ]);
+};
 
 const handleCreateFund = async (req, res) => {
   try {
@@ -54,7 +76,25 @@ const handleCreateFund = async (req, res) => {
       return res.status(400).json({ msg: "Please fill all required fields" });
     }
 
-    const coverImage = req.file ? req.file.path : undefined;
+    // Goal amount must be a valid number at or above the minimum.
+    const goal = Number(totalAmountRaised);
+    if (!Number.isFinite(goal) || goal < MIN_GOAL) {
+      return res
+        .status(400)
+        .json({ msg: `Goal amount must be a number of at least ${MIN_GOAL} PKR` });
+    }
+
+    // Payout details are required so the platform can disburse raised funds.
+    if (!accountHolderName?.trim() || !accountNumber?.trim() || !bankName?.trim()) {
+      return res.status(400).json({
+        msg: "Please provide your payout bank details (account holder name, account number, and bank name).",
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ msg: "A cover image is required" });
+    }
+    const coverImage = req.file.path;
 
     const newFund = new CreateFund({
       userId,
@@ -72,7 +112,8 @@ const handleCreateFund = async (req, res) => {
       upiId,
       coverImage,
       isApproved: false,
-      totalAmountRaised,
+      status: "pending",
+      totalAmountRaised: goal,
     });
 
     await newFund.save();
@@ -108,7 +149,7 @@ const getAllFunds = async (req, res) => {
   try {
     const { search } = req.query;
 
-    const filter = { isApproved: true };
+    const filter = { status: "active" };
 
     if (search) {
       filter.$or = [
@@ -118,8 +159,7 @@ const getAllFunds = async (req, res) => {
     }
 
     const funds = await CreateFund.find(filter)
-      .populate("donators")
-      .populate("userId")
+      .populate("userId", "fullName profilePhoto cityName")
       .sort({ createdAt: -1 });
 
     res.status(200).json({
@@ -135,31 +175,19 @@ const getAllFunds = async (req, res) => {
 
 const getTrendingFunds = async (req, res) => {
   try {
-    const approvedFunds = await CreateFund.find({ isApproved: true })
-      .populate("donators")
-      .populate("userId");
-
-    const filteredFunds = approvedFunds.filter((fund) => {
-      const donationAmount = fund.donationAmount || 0;
-      const totalRaised = fund.totalAmountRaised || 0;
-
-      return (
-        totalRaised > 0 &&
-        (donationAmount >= totalRaised / 2 ||
-          donationAmount >= totalRaised / 3 ||
-          donationAmount >= totalRaised / 4)
-      );
-    });
-
-    const sortedFunds = filteredFunds.sort(
-      (a, b) => (b.donationAmount || 0) - (a.donationAmount || 0)
-    );
-    const top4Funds = sortedFunds.slice(0, 4);
+    // Trending = live campaigns with the most raised so far.
+    const trendingFunds = await CreateFund.find({
+      status: "active",
+      donationAmount: { $gt: 0 },
+    })
+      .populate("userId", "fullName profilePhoto cityName")
+      .sort({ donationAmount: -1 })
+      .limit(4);
 
     res.status(200).json({
       success: true,
-      count: top4Funds.length,
-      trendingFunds: top4Funds,
+      count: trendingFunds.length,
+      trendingFunds,
     });
   } catch (error) {
     console.error("Error fetching trending funds:", error);
@@ -173,13 +201,11 @@ const getFundById = async (req, res) => {
   try {
     const fund = await CreateFund.findOne({
       _id: id,
-      isApproved: true,
-    })
-      .populate("donators")
-      .populate("userId");
+      status: "active",
+    }).populate("userId", "fullName profilePhoto cityName");
 
     if (!fund) {
-      return res.status(404).json({ msg: "Fund not found or not approved" });
+      return res.status(404).json({ msg: "Fund not found or not available" });
     }
 
     const reports = await fundReport
@@ -198,21 +224,26 @@ const getFundById = async (req, res) => {
   }
 };
 
+// Public list of supporters for a fund. Only verified donations are shown,
+// and only non-sensitive fields — no email, phone, or payment proof.
 const getDonatorsByFundId = async (req, res) => {
   const { fundId } = req.params;
 
   try {
-    const donators = await Donator.find({ fundId })
-      .populate("userId", "name email")
-      .sort({ donatedAt: -1 });
-    if (!donators.length) {
-      return res.status(404).json({ msg: "No donators found for this fund" });
-    }
+    const donators = await Donator.find({ fundId, isVerified: true })
+      .select("fullName amount donatedAt createdAt")
+      .sort({ createdAt: -1 });
+
+    const publicDonators = donators.map((d) => ({
+      fullName: d.fullName,
+      amount: d.amount,
+      donatedAt: d.donatedAt || d.createdAt,
+    }));
 
     res.status(200).json({
       success: true,
-      count: donators.length,
-      donators,
+      count: publicDonators.length,
+      donators: publicDonators,
     });
   } catch (error) {
     console.error("Error fetching donators by fund ID:", error);
@@ -235,10 +266,38 @@ const deleteMyFund = async (req, res) => {
       return res.status(403).json({ msg: "Unauthorized to delete this fund" });
     }
 
-    await CreateFund.findByIdAndDelete(id);
+    await cascadeDeleteFund(fund);
     res.status(200).json({ success: true, msg: "Fund deleted successfully" });
   } catch (error) {
     console.error("Error deleting fund:", error);
+    res.status(500).json({ msg: "Server error" });
+  }
+};
+
+// Owner closes/withdraws their own campaign without deleting its records.
+const closeMyFund = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  try {
+    const fund = await CreateFund.findById(id);
+    if (!fund) {
+      return res.status(404).json({ msg: "Fund not found" });
+    }
+    if (fund.userId.toString() !== userId) {
+      return res.status(403).json({ msg: "Unauthorized to close this fund" });
+    }
+    if (fund.status === "closed") {
+      return res.status(400).json({ msg: "Fund is already closed" });
+    }
+
+    fund.status = "closed";
+    fund.closedAt = new Date();
+    await fund.save();
+
+    res.status(200).json({ success: true, msg: "Fund closed successfully", fund });
+  } catch (error) {
+    console.error("Error closing fund:", error);
     res.status(500).json({ msg: "Server error" });
   }
 };
@@ -252,7 +311,7 @@ const adminDeleteFund = async (req, res) => {
       return res.status(404).json({ msg: "Fund not found" });
     }
 
-    await CreateFund.findByIdAndDelete(id);
+    await cascadeDeleteFund(fund);
     res
       .status(200)
       .json({ success: true, msg: "Fund deleted by admin successfully" });
@@ -269,5 +328,7 @@ module.exports = {
   getDonatorsByFundId,
   getTrendingFunds,
   deleteMyFund,
+  closeMyFund,
   adminDeleteFund,
+  cascadeDeleteFund,
 };
