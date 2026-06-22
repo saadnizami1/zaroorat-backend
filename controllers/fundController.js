@@ -100,6 +100,7 @@ const handleCreateFund = async (req, res) => {
       userId,
       country,
       postcode,
+      cityName: (req.body.cityName || user.cityName || "").trim(),
       fundCategory,
       fundraiseTitle,
       fundraiseStory,
@@ -153,10 +154,12 @@ const getAllFunds = async (req, res) => {
     // legacy campaigns created before the status field existed.
     const filter = { isApproved: true, status: { $nin: ["paused", "closed"] } };
 
-    if (search) {
+    if (search && typeof search === "string") {
+      // Escape regex metacharacters + cap length to prevent ReDoS / injection.
+      const safe = search.slice(0, 80).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       filter.$or = [
-        { fundCategory: { $regex: search, $options: "i" } },
-        { fundraiseTitle: { $regex: search, $options: "i" } },
+        { fundCategory: { $regex: safe, $options: "i" } },
+        { fundraiseTitle: { $regex: safe, $options: "i" } },
       ];
     }
 

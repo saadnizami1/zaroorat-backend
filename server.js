@@ -37,6 +37,8 @@ app.use(helmet());
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
+// Strip NoSQL operator keys from request bodies (injection defence).
+app.use(require("./middleware/sanitizeBody"));
 
 // Basic abuse protection. Note: on serverless each instance keeps its own
 // counter, so these are a first line of defence, not a hard guarantee.
@@ -87,6 +89,18 @@ app.use("/api/user", ProfileRoute);
 app.use("/api/fund", fundRoute);
 app.use("/api/donar", donateLimiter, donarRoute);
 
+// Centralised error handler — clean JSON, never leaks stack traces to clients.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (err && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ msg: "Image too large. Please upload a file under 8MB." });
+  }
+  if (err && /Only JPG|Not allowed by CORS/i.test(err.message || "")) {
+    return res.status(400).json({ msg: err.message });
+  }
+  console.error("Unhandled error:", err && err.message);
+  res.status(500).json({ msg: "Something went wrong. Please try again." });
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

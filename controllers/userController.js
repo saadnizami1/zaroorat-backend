@@ -24,7 +24,9 @@ const signup = async (req, res) => {
   if (!fullName || !email || !password || !phone) {
     return res.json({ success: false, message: "All fields are required" });
   }
-
+  if (typeof email !== "string" || typeof password !== "string") {
+    return res.status(400).json({ success: false, message: "Invalid input" });
+  }
 
   try {
     const existingUser = await User.findOne({ email });
@@ -54,21 +56,23 @@ const signup = async (req, res) => {
     };
 
     const newUser = await User.create(newUserData);
+    const { password: _pw, __v, ...safeUser } = newUser.toObject();
 
     return res.status(201).json({
       msg: "Signup successful, Please Login",
-      user: newUser,
+      user: safeUser,
     });
   } catch (error) {
-    console.log(error);
-    res.status(500).json({
-      msg: `Internal server error from user signup: ${error}`,
-    });
+    console.error("Signup error:", error.message);
+    res.status(500).json({ msg: "Server error during signup" });
   }
 };
 
 const login = async (req, res) => {
   const { email, password } = req.body;
+  if (typeof email !== "string" || typeof password !== "string") {
+    return res.status(400).json({ msg: "Invalid input" });
+  }
   try {
     const user = await User.findOne({ email });
 
@@ -93,7 +97,8 @@ const login = async (req, res) => {
       user: userWithoutPassword,
     });
   } catch (error) {
-    return res.status(500).json({ msg: `Server error: ${error}` });
+    console.error("Login error:", error.message);
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -102,8 +107,8 @@ const handleLogout = (req, res) => {
     clearTokenCookie(res);
     res.status(200).json({ message: "Logged out successfully" });
   } catch (error) {
-    console.log(error);
-    return res.status(500).json({ msg: `Server error: ${error}` });
+    console.error("Logout error:", error.message);
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -138,9 +143,8 @@ const forgotPassword = async (req, res) => {
       msg: "Reset link sent to your email successfully",
     });
   } catch (error) {
-    return res.status(500).json({
-      msg: `Server error from forgot password: ${error.message}`,
-    });
+    console.error("Forgot password error:", error.message);
+    return res.status(500).json({ msg: "Server error" });
   }
 };
 
@@ -174,9 +178,8 @@ const handleResetPassword = async (req, res) => {
 
     return res.status(200).json({ msg: "Password reset successfully" });
   } catch (error) {
-    return res
-      .status(500)
-      .json({ msg: `Server error from handleResetPassword: ${error}` });
+    console.error("Reset password error:", error.message);
+    return res.status(500).json({ msg: "Invalid or expired reset link" });
   }
 };
 
