@@ -1,0 +1,16 @@
+# Render's free tier puts the server to sleep after 15 idle minutes, which
+# makes the first visitor wait 20-50 seconds for anything to load. This pings
+# the API every 10 minutes so the server never falls asleep.
+name: Keep backend awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping API
+        run: curl -sS -o /dev/null -m 120 --retry 2 "https://backend-113.onrender.com/api/fund/trending" || true
