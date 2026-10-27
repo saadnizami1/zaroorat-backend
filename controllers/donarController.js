@@ -36,7 +36,9 @@ const donateAmount = async (req, res) => {
 
     const fund = await CreateFund.findById(fundId);
     if (!fund) return res.status(404).json({ msg: "Fund not found" });
-    if (fund.status !== "active") {
+    // Same rule as the public listing: approved and not paused/closed.
+    // (Campaigns created before the status field existed load as "pending".)
+    if (!fund.isApproved || ["paused", "closed"].includes(fund.status)) {
       return res
         .status(400)
         .json({ msg: "This campaign is not currently accepting donations" });

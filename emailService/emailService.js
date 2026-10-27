@@ -2,6 +2,13 @@ const { transporter } = require("../config/nodemailer/nodemailer");
 
 const Logo = `https://res.cloudinary.com/dupvtfaoc/image/upload/v1751021742/fundraising_app/shpy31bqfs1yim4v92fq.png`;
 
+// Visitor-typed text must not be able to inject HTML into our emails.
+const escapeHtml = (value = "") =>
+  String(value).replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+
 const sendResetPassword = async (name, toEmail, resetPasswordLink) => {
   try {
     const mailOptions = {
@@ -123,7 +130,7 @@ const sendFundCreationMailToUser = async ({ fund, user }) => {
         <div style="font-family: Arial, sans-serif; padding: 20px; color: #333;">
 
           <h2 style="color: #28a745;">Hello ${user.name},</h2>
-          <p>Thank you for creating a new fundraiser on CampaignFund.</p>
+          <p>Thank you for creating a new fundraiser on Zaroorat.</p>
 
           <h3>Fund Details:</h3>
           <ul>
@@ -310,11 +317,50 @@ const sendThankYouEmailToDonor = async ({ donor, fund }) => {
 };
 
 
+// A message from the website's contact form, delivered to the team inbox.
+// Reply-To is the visitor, so hitting "Reply" in Gmail answers them directly.
+const sendContactMessageToAdmin = async ({ fullName, email, phone, message }) => {
+  try {
+    const subjectName = fullName.replace(/[\r\n]+/g, " ").slice(0, 100);
+    await transporter.sendMail({
+      from: `"Zaroorat Website" <${process.env.ADMIN_EMAIL}>`,
+      to: process.env.ADMIN_EMAIL,
+      replyTo: email,
+      subject: `Website message from ${subjectName}`,
+      text: `${message}\n\n— ${fullName}\n${email}${phone ? `\n${phone}` : ""}`,
+      html: `
+<div style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 30px;">
+  <div style="max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; color: #333;">
+    <div style="text-align: center; margin-bottom: 20px;">
+      <img src="${Logo}" alt="Zaroorat Logo" style="max-width: 150px;" />
+    </div>
+    <h2 style="color: #0056b3;">New message from the website</h2>
+    <ul>
+      <li><strong>Name:</strong> ${escapeHtml(fullName)}</li>
+      <li><strong>Email:</strong> ${escapeHtml(email)}</li>
+      ${phone ? `<li><strong>Phone:</strong> ${escapeHtml(phone)}</li>` : ""}
+    </ul>
+    <h3>Message</h3>
+    <p style="white-space: pre-line; line-height: 1.6;">${escapeHtml(message)}</p>
+    <p style="margin-top: 20px; color: #777; font-size: 13px;">Reply to this email to answer ${escapeHtml(fullName)} directly.</p>
+  </div>
+</div>
+      `,
+    });
+    console.log("Contact message delivered to admin inbox.");
+    return true;
+  } catch (error) {
+    console.error("Error sending contact message:", error);
+    return false;
+  }
+};
+
 module.exports = {
   sendResetPassword,
   sendFundApprovalMailToAdmin,
   sendFundCreationMailToUser,
   sendFundStatusEmailToUser,
    sendThankYouEmailToDonor,
-   sendDonationNotificationToAdmin
+   sendDonationNotificationToAdmin,
+  sendContactMessageToAdmin,
 };

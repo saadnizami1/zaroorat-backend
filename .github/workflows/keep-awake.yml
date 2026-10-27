@@ -1,6 +1,10 @@
 # Render's free tier puts the server to sleep after 15 idle minutes, which
 # makes the first visitor wait 20-50 seconds for anything to load. This pings
 # the API every 10 minutes so the server never falls asleep.
+#
+# Note: GitHub pauses scheduled workflows in repos with no commits for 60
+# days. Re-enable it from the repo's Actions tab if that happens (an external
+# uptime monitor such as UptimeRobot is the more reliable option).
 name: Keep backend awake
 
 on:
@@ -13,4 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping API
-        run: curl -sS -o /dev/null -m 120 --retry 2 "https://backend-113.onrender.com/api/fund/trending" || true
+        run: |
+          # The custom domain works even while Render's own onrender.com
+          # address is switched off; ping both so either keeps it warm.
+          for url in https://api.zaroorat.xyz/api/fund/trending https://backend-113.onrender.com/api/fund/trending; do
+            curl -sS -o /dev/null -w "$url -> %{http_code}\n" -m 120 --retry 2 "$url" || true
+          done

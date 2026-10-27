@@ -10,17 +10,28 @@ const app = express();
 app.set("trust proxy", 1); // behind Vercel/proxy: needed for correct client IPs in rate limiting
 const PORT = process.env.PORT || 5001;
 
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  process.env.CLIENT_URL_1,
-  process.env.CLIENT_URL_2,
-];
+// Sites allowed to call the API with cookies. The production frontends are
+// built in so a stale or mistyped CLIENT_URL env var can never lock the real
+// site out; the env vars add more (e.g. http://localhost:5173 for dev).
+// Trailing slashes are dropped because browsers never send one in Origin.
+const normalizeOrigin = (url) => (url || "").trim().replace(/\/+$/, "");
+const allowedOrigins = new Set(
+  [
+    "https://zaroorat.xyz",
+    "https://www.zaroorat.xyz",
+    "https://frontend-seven-ivory-56.vercel.app",
+    process.env.CLIENT_URL,
+    process.env.CLIENT_URL_1,
+    process.env.CLIENT_URL_2,
+  ]
+    .map(normalizeOrigin)
+    .filter(Boolean)
+);
 
 app.use(
   cors({
     origin: function (origin, callback) {
-  
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.has(origin)) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS: " + origin));
@@ -29,6 +40,7 @@ app.use(
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
+    maxAge: 600, // browsers may reuse a preflight answer for 10 minutes
   })
 );
 
@@ -62,6 +74,15 @@ const donateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+// The contact form sends email from the platform's Gmail account, so keep it
+// tight enough that a bot can't burn through Gmail's daily sending limit.
+const contactLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { msg: "Too many messages from this connection. Please try again later, or email us directly." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 app.use("/api", apiLimiter);
 
@@ -77,6 +98,7 @@ const fundRaiseApprovalRoute = require("./routes/adminRoute/fundRaiseApproval");
 const deletionRequestRoute = require("./routes/adminRoute/deletionRequest");
 const donationVerificationRoute = require("./routes/adminRoute/donationVerification");
 const userDetailRoute = require("./routes/adminRoute/userDetails");
+const contactRoute = require("./routes/contact/contact");
 app.use("/api/auth", authLimiter, userAuthRoute, googleAuthRoute);
 app.use(
   "/api/admin",
@@ -88,6 +110,7 @@ app.use(
 app.use("/api/user", ProfileRoute);
 app.use("/api/fund", fundRoute);
 app.use("/api/donar", donateLimiter, donarRoute);
+app.use("/api/contact", contactLimiter, contactRoute);
 
 // Centralised error handler — clean JSON, never leaks stack traces to clients.
 // eslint-disable-next-line no-unused-vars

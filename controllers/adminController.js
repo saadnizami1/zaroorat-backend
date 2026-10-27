@@ -7,10 +7,14 @@ const Donator = require("../models/donatorModel");
 const { cascadeDeleteFund } = require("./fundController");
 const { deleteCloudinaryImage } = require("../config/cloudinary/deleteImage");
 
+// Organiser details the admin screens need — never the password hash.
+const OWNER_FIELDS = "-password -__v";
+
 const getPendingFunds = async (req, res) => {
   try {
     const pendingFunds = await CreateFund.find({ status: "pending" }).populate(
-      "userId"
+      "userId",
+      OWNER_FIELDS
     );
     res.status(200).json({ pendingFunds });
   } catch (error) {
@@ -25,7 +29,7 @@ const approveFund = async (req, res) => {
       fundId,
       { isApproved: true, status: "active" },
       { new: true }
-    ).populate("userId");
+    ).populate("userId", OWNER_FIELDS);
 
     if (!fund) {
       return res.status(404).json({ msg: "Fund not found" });
@@ -47,7 +51,7 @@ const rejectFund = async (req, res) => {
   try {
     const fundId = req.params.id;
 
-    const fund = await CreateFund.findById(fundId).populate("userId");
+    const fund = await CreateFund.findById(fundId).populate("userId", OWNER_FIELDS);
     if (!fund) {
       return res.status(404).json({ msg: "Fund not found" });
     }

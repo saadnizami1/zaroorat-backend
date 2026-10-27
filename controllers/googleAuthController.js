@@ -1,14 +1,17 @@
 const axios = require("axios");
-const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI;
-const CLIENT_URL_1 = process.env.CLIENT_URL_1;
-const JWT_SECRET = process.env.JWT_SECRET;
+const CLIENT_URL_1 = process.env.CLIENT_URL_1 || "https://zaroorat.xyz";
 const qs = require("querystring");
 const User = require("../models/userModel");
 const setTokenCookie = require("../authService/setTokenCookie");
+const { createToken } = require("../authService/authService");
+
+// Send the visitor back to the sign-in page, which explains what happened,
+// instead of leaving them on a raw JSON error from the API domain.
+const failToSignin = (res) => res.redirect(`${CLIENT_URL_1}/signin?google=failed`);
 
 const redirectToGoogle = (req, res) => {
   const googleAuthURL =
@@ -20,8 +23,9 @@ const redirectToGoogle = (req, res) => {
 const googleCallback = async (req, res) => {
   const { code } = req.query;
 
+  // No code = the visitor cancelled on Google's screen (or Google reported an error).
   if (!code) {
-    return res.status(400).json({ message: "Authorization code missing" });
+    return failToSignin(res);
   }
 
   try {
@@ -51,9 +55,7 @@ const googleCallback = async (req, res) => {
     const { sub: googleId, name, email, picture } = userResponse.data;
 
     if (!googleId) {
-      return res
-        .status(400)
-        .json({ message: "Google ID missing from response" });
+      return failToSignin(res);
     }
 
     let user = await User.findOne({ googleId });
@@ -80,11 +82,15 @@ const googleCallback = async (req, res) => {
       }
     }
 
-    const token = jwt.sign(
-      { id: user._id, email: user.email, name: user.fullName, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "1h" }
-    );
+    // Same rule as email/password login.
+    if (user.status && user.status !== "active") {
+      return failToSignin(res);
+    }
+
+    // Same token as email/password login (fullName/phone in the payload, 1-day
+    // expiry) — the old 1-hour token logged Google users out after an hour.
+    const token = createToken(user);
+    if (!token) return failToSignin(res);
     setTokenCookie(res, token);
     const encodedName = encodeURIComponent(user.fullName);
     const encodedEmail = encodeURIComponent(user.email);
@@ -94,8 +100,8 @@ const googleCallback = async (req, res) => {
       `${CLIENT_URL_1}/?name=${encodedName}&email=${encodedEmail}&role=${encodedRole}`
     );
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: "Internal Server Error" });
+    console.error("Google login error:", error.response?.data || error.message);
+    return failToSignin(res);
   }
 };
 

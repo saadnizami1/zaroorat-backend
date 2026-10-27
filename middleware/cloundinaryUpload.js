@@ -7,7 +7,9 @@ const storage = new CloudinaryStorage({
   params: {
     folder: "fundraising_app", // folder name in your Cloudinary account
     allowedFormats: ["jpg", "jpeg", "png", "webp"],
-    transformation: [{ width: 500, height: 500, crop: "limit" }],
+    // Big enough that payment receipts and CNICs stay readable for admins and
+    // cover photos stay sharp; pages request smaller versions via f_auto/w_.
+    transformation: [{ width: 1600, height: 1600, crop: "limit" }],
   },
 });
 
