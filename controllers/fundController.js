@@ -238,13 +238,12 @@ const getDonatorsByFundId = async (req, res) => {
 
   try {
     const donators = await Donator.find({ fundId, isVerified: true })
-      .select("fullName amount donatedAt createdAt")
+      .select("fullName amount createdAt")
       .sort({ createdAt: -1 });
 
     const publicDonators = donators.map((d) => ({
       fullName: d.fullName,
       amount: d.amount,
-      donatedAt: d.donatedAt || d.createdAt,
     }));
 
     res.status(200).json({
